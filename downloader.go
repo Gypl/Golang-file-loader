@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/kennygrant/sanitize"
 )
 
 type download struct {
@@ -34,14 +36,14 @@ func handleDownloadRequest(response http.ResponseWriter, request *http.Request) 
 
 	err = json.Unmarshal(r, &downloadRequest)
 	if err != nil {
-		http.Error(response, "bad request: "+err.Error(), 400)
+		http.Error(response, "bad request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	log.Printf("%#v", downloadRequest)
 
 	err = getFile(downloadRequest)
 	if err != nil {
-		http.Error(response, "internal server error", 500)
+		http.Error(response, "internal server error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -55,6 +57,14 @@ func getFile(downloadRequest download) error {
 		return err
 	}
 
+	save, err := createSaveDirectory(sanitize.BaseName(downloadRequest.Title))
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	// Encoding URL via path never seems to work as expected, fall back to
+	// simply replacing spaces with %20's, for now.
 	response, err := http.Get(strings.Replace(downloadRequest.Location, " ", "%20", -1))
 	if err != nil {
 		log.Println(err)
@@ -62,13 +72,7 @@ func getFile(downloadRequest download) error {
 	}
 	defer response.Body.Close()
 
-	save, err := createSaveDirectory(downloadRequest.Title)
-	if err != nil {
-		log.Println(err)
-		return err
-	}
-
-	out, err := os.Create(filepath.Join(save, filepath.Base(u.Path)))
+	out, err := os.Create(filepath.Join(save, sanitize.Path(filepath.Base(u.Path))))
 	defer out.Close()
 	_, err = io.Copy(out, response.Body)
 	if err != nil {
